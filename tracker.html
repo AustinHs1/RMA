@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Node Tracker</title>
+<style>
+html,body{margin:0;padding:0;height:100%}
+body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13px;color:#111;background:#fff}
+*{box-sizing:border-box}
+#app{display:grid;grid-template-columns:1fr 1fr 1fr;height:100vh;width:100%;overflow:hidden}
+.col{border-right:1px solid #bbb;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.hdr{padding:6px 8px;border-bottom:1px solid #bbb;background:#f2f2f2;font-weight:bold}
+.box{flex:1;min-height:0;min-width:0;overflow:auto;padding:4px;display:flex}
+table{width:100%;height:100%;min-width:0;table-layout:fixed;border-collapse:collapse;line-height:1.25}
+th{text-align:left;color:#666;font-weight:normal;padding:.1em 4px}
+tbody tr{border-top:1px solid #e2e2e2}
+td{padding:.14em 4px}
+.d{border-left:1px solid #e2e2e2}
+.slot{user-select:none;cursor:pointer;background:#fafafa;color:#666}
+.slot.on{background:#d21f1f;color:#fff;font-weight:bold}
+.sn{border-left:1px solid #e2e2e2;cursor:pointer}
+.sn.cp{color:#d21f1f}
+.sn:hover{background:#ffe9a8}
+.note{border-left:1px solid #e2e2e2;overflow-wrap:break-word;cursor:pointer}
+.st{padding:.14em 2px;border-left:1px solid #e2e2e2;border-right:1px solid #e2e2e2;overflow:hidden}
+.st>div{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1.25;overflow:hidden}
+.lbl{flex:0 0 auto;white-space:nowrap;color:#222}
+.lbl.p{color:#d21f1f}
+.lbl.pass{color:#1a7f37}
+.lbl.fail{color:#d21f1f;font-weight:bold}
+.lbl.over{color:#d21f1f;font-weight:bold}
+.tm{flex:0 1 auto;min-width:0;font-size:max(9px,.8em);white-space:nowrap;overflow:hidden;color:#888}
+.tm.over{color:#d21f1f;font-weight:bold}
+.arr{padding:.14em 2px;user-select:none;font-size:max(9px,.8em);cursor:pointer;color:transparent}
+.arr.on{color:#0b57d0}
+.arr.l{border-left:1px solid #e2e2e2;text-align:left}
+.arr.r{text-align:right}
+#term{display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden;background:#111;color:#d6d6d6}
+#term>.hdr{border-bottom:1px solid #333;background:#1c1c1c;color:#fff;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+#clock{font-weight:normal;color:#9a9a9a}
+#log{flex:1;overflow:auto;padding:8px;line-height:1.45}
+#log div{white-space:pre-wrap}
+#bar{border-top:1px solid #333;padding:6px;display:flex;gap:6px;align-items:stretch}
+#in{flex:1;min-height:168px;resize:vertical;background:#000;color:#eaeaea;border:1px solid #444;padding:6px;font-family:inherit;font-size:13px;line-height:1.45}
+#in:focus{outline:1px solid #111}
+a{color:#0b57d0}a:hover{color:#083b8f}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="col"><div class="hdr">RACK 1</div><div class="box"><table id="t1"></table></div></div>
+  <div class="col"><div class="hdr">RACK 2</div><div class="box"><table id="t2"></table></div></div>
+  <div id="term">
+    <div class="hdr"><span>TERMINAL</span><span id="clock"></span></div>
+    <div id="log"></div>
+    <div id="bar"><textarea id="in" spellcheck="false" placeholder="/help — Enter runs, Shift+Enter newline"></textarea></div>
+  </div>
+</div>
+<script>
+const KEY='nodeTracker.v1';
+const STAGES=['bup p','bup','L10 p','L10','Pass','Fail'];
+const TIMED={'bup':90,'L10':480};
+const COUNTED={'bup p':1,'bup':1,'L10 p':1,'L10':1};
+const SECRET='s';
+const TOP=37,BOT=11,RIDS=['1','2'];
+
+let racks={1:{},2:{}}, flags={}, secret={note:'',log:[]}, copied=null, lastCopy=null, armed=false, pinned=true, drag=null, now=Date.now();
+const $=id=>document.getElementById(id);
+const logEl=$('log'), inEl=$('in');
+
+function cleanSecret(s){s=s||{};return{note:String(s.note||''),log:Array.isArray(s.log)?s.log:[]}}
+
+function migrate(src){
+  const out={1:{},2:{}};
+  for(const r of RIDS){
+    const rack=src[r]||{};
+    for(const k of Object.keys(rack)){
+      const n=rack[k]||{};
+      const since=Number(n.since||n.statusSince)||Date.now();
+      out[r][k]={
+        mac:String(n.mac||''),serial:String(n.serial||''),note:n.note||'',
+        log:Array.isArray(n.log)?n.log:(n.note?[{t:since,text:n.note}]:[]),
+        stage:Number.isInteger(Number(n.stage))&&n.stage>=0&&n.stage<STAGES.length?Number(n.stage):0,
+        visits:n.visits&&typeof n.visits==='object'?n.visits:{'bup p':1},
+        limit:Number(n.limit)||0,since};
+    }
+  }
+  return out;
+}
+
+function persist(){try{localStorage.setItem(KEY,JSON.stringify({racks,flags,secret}))}catch(e){}}
+function print(...lines){for(const t of lines){const d=document.createElement('div');d.textContent=t;logEl.appendChild(d)}if(pinned)logEl.scrollTop=logEl.scrollHeight}
+function mins(since){return Math.max(0,Math.floor((now-since)/60000))}
+function stamp(t){const d=new Date(t),p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())}
+function stageIndex(n){const i=Number(n.stage);return Number.isInteger(i)&&i>=0&&i<STAGES.length?i:0}
+function labelFor(name,c){return(COUNTED[name]&&c>1)?name+' ('+Math.min(c,3)+'x)':name}
+function stageLabel(n){const name=STAGES[stageIndex(n)];return labelFor(name,(n.visits||{})[name]||1)}
+function countNodes(r){return RIDS.reduce((t,k)=>t+Object.keys(r[k]||{}).length,0)}
+
+function rowFont(){
+  const box=document.querySelector('.box');
+  const h=(box?box.clientHeight:0)-8;
+  if(!h)return 13;
+  return Math.max(9,Math.min(26,Math.floor((h/(TOP-BOT+2))/1.65)));
+}
+
+function moveStage(r,slot,dir){
+  const n=racks[r][slot];if(!n)return;
+  const j=stageIndex(n)+dir;if(j<0||j>=STAGES.length)return;
+  const name=STAGES[j],visits=Object.assign({},n.visits||{});
+  if(dir>0)visits[name]=(visits[name]||0)+1;
+  n.stage=j;n.visits=visits;n.limit=TIMED[name]||0;
+  if(TIMED[name]&&dir>0)n.since=Date.now();
+  n.log=(n.log||[]).concat([{t:Date.now(),text:'stage: '+labelFor(name,visits[name]||1)}]);
+  persist();render();
+}
+
+function flagged(){
+  const out=[];
+  for(const r of RIDS)for(let s=TOP;s>=BOT;s--)if(flags[r+'-'+s]&&racks[r][s])out.push({r,slot:s,node:racks[r][s]});
+  return out;
+}
+
+function startDrag(r,slot,e){
+  e.preventDefault();
+  drag={r,anchor:slot,on:!flags[r+'-'+slot],base:Object.assign({},flags)};
+  window.addEventListener('mousemove',dragMove);
+  applyRange(slot);
+}
+function dragMove(e){
+  if(!drag)return;
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  const cell=el&&el.closest?el.closest('td[data-slot]'):null;
+  if(!cell||cell.dataset.rack!==drag.r)return;
+  applyRange(Number(cell.dataset.slot));
+}
+function applyRange(slot){
+  const lo=Math.min(drag.anchor,slot),hi=Math.max(drag.anchor,slot);
+  flags=Object.assign({},drag.base);
+  for(let s=lo;s<=hi;s++){const k=drag.r+'-'+s;if(drag.on)flags[k]=true;else delete flags[k]}
+  render();
+}
+function endDrag(){if(!drag)return;window.removeEventListener('mousemove',dragMove);drag=null;persist()}
+
+function doCopy(r,slot,n,sn){
+  const key=r+'-'+slot, full=lastCopy===key;
+  lastCopy=full?null:key;
+  copy(full?n.mac:sn);
+  copied=key;render();
+}
+
+function stageNote(target,existing){
+  const withText='/note '+target+' '+(existing||'');
+  inEl.value=(existing&&inEl.value!==withText)?withText:'/note '+target+' ';
+  armed=false;inEl.focus();inEl.selectionStart=inEl.selectionEnd=inEl.value.length;
+}
+
+const HEAD='<thead><tr>'+
+ '<th style="width:8%">#</th>'+
+ '<th style="width:13%;border-left:1px solid #d8d8d8">SN</th>'+
+ '<th style="width:37%;border-left:1px solid #d8d8d8">NOTE</th>'+
+ '<th style="width:6%;border-left:1px solid #d8d8d8"></th>'+
+ '<th style="width:30%;text-align:center;border-left:1px solid #d8d8d8;border-right:1px solid #d8d8d8">STAGE</th>'+
+ '<th style="width:6%"></th></tr></thead>';
+
+function render(){
+  const fs=rowFont()+'px';
+  for(const r of RIDS){
+    const tb=document.createElement('tbody');
+    for(let slot=TOP;slot>=BOT;slot--){
+      const n=racks[r][slot];
+      const tr=document.createElement('tr');
+      const sn=n?String(n.serial).slice(-5):'';
+      const si=n?stageIndex(n):0;
+      const lim=n?(TIMED[STAGES[si]]||0):0;
+      const m=n?mins(n.since):0;
+      const over=!!(lim&&m>=lim);
+      const name=STAGES[si];
+
+      const c0=document.createElement('td');
+      c0.className='slot'+(flags[r+'-'+slot]?' on':'');
+      c0.dataset.rack=r;c0.dataset.slot=slot;c0.textContent=slot;
+      c0.title='click or drag to select';
+      c0.addEventListener('mousedown',e=>startDrag(r,slot,e));
+      tr.appendChild(c0);
+
+      const c1=document.createElement('td');
+      c1.className='sn'+(n&&copied===r+'-'+slot?' cp':'');
+      c1.textContent=sn;
+      if(n){c1.title='click to copy';c1.onclick=()=>doCopy(r,slot,n,sn)}
+      tr.appendChild(c1);
+
+      const c2=document.createElement('td');
+      c2.className='note';c2.textContent=n&&n.note?n.note:'';
+      if(n){c2.title='click to write a note';c2.onclick=()=>stageNote(r+'-'+slot,n.note||'')}
+      tr.appendChild(c2);
+
+      const cp=document.createElement('td');
+      cp.className='arr l'+(n&&si>0?' on':'');cp.textContent='\u25C0';
+      if(n&&si>0){cp.title='back a stage';cp.onclick=()=>moveStage(r,slot,-1)}
+      tr.appendChild(cp);
+
+      const c3=document.createElement('td');
+      c3.className='st';
+      if(n){
+        const wrap=document.createElement('div');
+        const lbl=document.createElement('span');
+        lbl.className='lbl'+(over?' over':(/\bp$/.test(name)?' p':(name==='Pass'?' pass':(name==='Fail'?' fail':''))));
+        lbl.textContent=stageLabel(n);
+        const tm=document.createElement('span');
+        tm.className='tm'+(over?' over':'');
+        tm.textContent=lim?m+'/'+lim:'';
+        wrap.appendChild(lbl);wrap.appendChild(tm);c3.appendChild(wrap);
+      }
+      tr.appendChild(c3);
+
+      const cn=document.createElement('td');
+      cn.className='arr r'+(n&&si<STAGES.length-1?' on':'');cn.textContent='\u25B6';
+      if(n&&si<STAGES.length-1){cn.title='forward a stage';cn.onclick=()=>moveStage(r,slot,1)}
+      tr.appendChild(cn);
+
+      tb.appendChild(tr);
+    }
+    const t=$('t'+r);
+    t.style.fontSize=fs;
+    t.innerHTML=HEAD;
+    t.appendChild(tb);
+  }
+  $('clock').textContent=stamp(now).slice(-5);
+}
+
+function findHits(q){
+  q=String(q).toLowerCase();const hits=[];
+  for(const r of RIDS)for(let s=TOP;s>=BOT;s--){
+    const n=racks[r][s];if(!n)continue;
+    const sn=String(n.serial).toLowerCase();
+    if(sn===q||sn.slice(-5)===q)hits.push({r,slot:s,node:n});
+  }
+  return hits;
+}
+
+function resolve(cmd,arg){
+  const addr=String(arg).match(/^([12])\s*-\s*(\d+)$/);
+  if(addr){
+    const n=(racks[addr[1]]||{})[Number(addr[2])];
+    if(!n){print('error: '+addr[1]+'-'+addr[2]+' is empty');return null}
+    return{r:addr[1],slot:Number(addr[2]),node:n};
+  }
+  const hits=findHits(arg);
+  if(!hits.length){print('error: no node matching "'+arg+'"');return null}
+  if(hits.length>1){
+    print('error: "'+arg+'" matches '+hits.length+' nodes: '+hits.map(h=>h.r+'-'+h.slot+' '+h.node.serial).join(', '),
+      'use the slot instead, e.g. '+cmd+' '+hits[0].r+'-'+hits[0].slot);
+    return null;
+  }
+  return hits[0];
+}
+
+function findSerial(s){
+  for(const r of RIDS)for(const k of Object.keys(racks[r]))if(racks[r][k].serial===s)return r+'-'+k;
+  return null;
+}
+
+function add(head,body){
+  const m=head.match(/^\/add\s+(\d+)\s*-\s*(\d+)$/i);
+  if(!m)return print('error: usage /add <rack#-startingslot#>');
+  const r=m[1];let slot=Number(m[2]);
+  if(r!=='1'&&r!=='2')return print('error: rack must be 1 or 2');
+  if(slot>TOP||slot<BOT)return print('error: slot '+slot+' out of range ('+TOP+'-'+BOT+')');
+  if(!body.length)return print('error: no nodes given');
+  const rack=racks[r],place=[],errs=[],seen=new Set();
+  for(let i=0;i<body.length;i++){
+    if(slot<BOT){errs.push('ran past bottom of rack at slot '+slot);break}
+    const line=body[i];
+    if(line.toLowerCase()==='e'){slot--;continue}
+    const serial=body[i+1];
+    if(serial===undefined){errs.push('missing serial for MAC '+line);break}
+    if(serial.toLowerCase()==='e'){errs.push('expected a serial after MAC '+line+', got "e"');break}
+    i++;
+    if(rack[slot])errs.push('slot '+r+'-'+slot+' already occupied by '+String(rack[slot].serial).slice(-5));
+    if(seen.has(serial))errs.push('serial '+serial+' listed twice');
+    seen.add(serial);
+    const dup=findSerial(serial);
+    if(dup)errs.push('serial '+serial+' already in '+dup);
+    place.push({slot,mac:line,serial});slot--;
+  }
+  if(errs.length)return print(...errs.map(e=>'error: '+e),'nothing added');
+  if(!place.length)return print('error: no nodes given');
+  const t=Date.now();
+  place.forEach(p=>{rack[p.slot]={mac:p.mac,serial:p.serial,note:'',log:[],stage:0,visits:{'bup p':1},limit:0,since:t}});
+  persist();render();
+  print('added '+place.length+' node'+(place.length===1?'':'s')+': '+place.map(p=>r+'-'+p.slot+' '+String(p.serial).slice(-5)).join(', '));
+}
+
+function note(head){
+  const m=head.match(/^\/note\s+(\S+)\s*([\s\S]*)$/i);
+  if(!m)return print('error: usage /note <SN> <note>');
+  const text=m[2].trim().slice(0,100);
+  if(m[1].toLowerCase()===SECRET){
+    if(!text)return print('error: no note text given');
+    secret={note:text,log:(secret.log||[]).concat([{t:Date.now(),text}])};
+    persist();return print('noted');
+  }
+  const h=resolve('/note',m[1]);if(!h)return;
+  const sn=String(h.node.serial).slice(-5);
+  if(!text){h.node.note='';persist();render();return print('cleared note on '+sn)}
+  h.node.note=text;
+  h.node.log=(h.node.log||[]).concat([{t:Date.now(),text}]);
+  persist();render();print('note on '+sn+': '+text);
+}
+
+function batchNote(head){
+  const m=head.match(/^\/bnote\s+([\s\S]+)$/i);
+  if(!m)return print('error: usage /bnote <note>');
+  const text=m[1].trim().slice(0,100);
+  if(!text)return print('error: no note text given');
+  const hits=flagged();
+  if(!hits.length)return print('error: no nodes selected. click or drag slot numbers first');
+  const t=Date.now();
+  hits.forEach(h=>{h.node.note=text;h.node.log=(h.node.log||[]).concat([{t,text}])});
+  persist();render();
+  print('noted '+hits.length+' node(s): '+hits.map(h=>h.r+'-'+h.slot).join(', '),text);
+}
+
+function batchStage(dir){
+  const hits=flagged();
+  if(!hits.length)return print('error: no nodes selected. click or drag slot numbers first');
+  const t=Date.now(),moved=[];
+  hits.forEach(h=>{
+    const n=h.node,j=stageIndex(n)+dir;
+    if(j<0||j>=STAGES.length)return;
+    const name=STAGES[j],visits=Object.assign({},n.visits||{});
+    if(dir>0)visits[name]=(visits[name]||0)+1;
+    const label=labelFor(name,visits[name]||1);
+    n.stage=j;n.visits=visits;n.limit=TIMED[name]||0;
+    if(TIMED[name]&&dir>0)n.since=t;
+    n.log=(n.log||[]).concat([{t,text:'stage: '+label}]);
+    moved.push(h.r+'-'+h.slot+' '+label);
+  });
+  if(!moved.length)return print('no nodes moved: all at the '+(dir>0?'last':'first')+' stage');
+  persist();render();
+  print('moved '+moved.length+' node(s): '+moved.join(', '));
+}
+
+function showLog(head){
+  const m=head.match(/^\/log\s+(\S+)$/i);
+  if(!m)return print('error: usage /log <SN>');
+  if(m[1].toLowerCase()===SECRET){
+    const l=secret.log||[];
+    return print(l.length?l.map(e=>stamp(e.t)+'  '+e.text).join('\n'):'(nothing logged)');
+  }
+  const h=resolve('/log',m[1]);if(!h)return;
+  const l=h.node.log||[];
+  if(!l.length)return print(String(h.node.serial).slice(-5)+': no notes logged');
+  print(l.map(e=>stamp(e.t)+'  '+e.text).join('\n'));
+}
+
+function del(head){
+  const m=head.match(/^\/del\s+(\S+)$/i);
+  if(!m)return print('error: usage /del <SN>');
+  const h=resolve('/del',m[1]);if(!h)return;
+  delete racks[h.r][h.slot];persist();render();
+  print('removed '+h.node.serial+' from '+h.r+'-'+h.slot);
+}
+
+function batchDel(){
+  const hits=flagged();
+  if(!hits.length)return print('error: no nodes selected. click or drag slot numbers first');
+  hits.forEach(h=>{delete racks[h.r][h.slot];delete flags[h.r+'-'+h.slot]});
+  persist();render();
+  print('removed '+hits.length+' node(s): '+hits.map(h=>h.r+'-'+h.slot+' '+String(h.node.serial).slice(-5)).join(', '));
+}
+
+function info(head){
+  const m=head.match(/^\/i\s+(\S+)$/i);
+  if(!m)return print('error: usage /i <SN>');
+  const q=m[1].toLowerCase();
+  const rk=q.match(/^rack\s*-?([12])$/)||q.match(/^r([12])$/);
+  if(rk){
+    const lines=[];
+    for(let s=TOP;s>=BOT;s--){const n=racks[rk[1]][s];if(n)lines.push(n.mac,n.serial)}
+    return print(lines.length?lines.join('\n'):'(empty)');
+  }
+  const h=resolve('/i',m[1]);if(!h)return;
+  print(h.node.mac,h.node.serial);
+}
+
+function batchInfo(mode){
+  const hits=flagged();
+  if(!hits.length)return print('error: no nodes selected. click or drag slot numbers first');
+  const lines=[];
+  hits.forEach(h=>{
+    if(mode==='bmc')lines.push(h.node.mac);
+    else if(mode==='sn')lines.push(h.node.serial);
+    else lines.push(h.node.mac,h.node.serial);
+  });
+  print(lines.join('\n'));
+}
+
+function clearSel(){
+  const n=Object.keys(flags).length;
+  if(!n)return print('nothing selected');
+  flags={};persist();render();print('cleared '+n+' selection(s)');
+}
+
+function exportState(){
+  const data=JSON.stringify({v:3,racks,flags,secret});
+  copy(data);
+  print(countNodes(racks)+' node(s) exported. paste back with /import <data>',data);
+}
+
+function importState(head){
+  const m=head.match(/^\/import\s+([\s\S]+)$/i);
+  if(!m)return print('error: usage /import <data>');
+  let d;try{d=JSON.parse(m[1].trim())}catch(e){return print('error: could not parse that data')}
+  const src=d&&d.racks?d.racks:d;
+  if(!src||typeof src!=='object')return print('error: data has no racks');
+  const next={1:{},2:{}},bad=[];
+  for(const r of RIDS){
+    const rack=src[r]||{};
+    for(const k of Object.keys(rack)){
+      const slot=Number(k),n=rack[k];
+      if(!Number.isInteger(slot)||slot>TOP||slot<BOT){bad.push('slot '+r+'-'+k);continue}
+      if(!n||!n.serial){bad.push('node at '+r+'-'+k+' has no serial');continue}
+      next[r][slot]=n;
+    }
+  }
+  if(bad.length)return print(...bad.map(b=>'error: '+b),'nothing imported');
+  racks=migrate(next);
+  flags=d.flags||{};
+  if(d.secret)secret=cleanSecret(d.secret);
+  persist();render();
+  print('imported '+countNodes(racks)+' node(s), replacing previous state');
+}
+
+function copy(text){
+  const done=()=>print('copied '+text);
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(text).then(done,()=>fallbackCopy(text,done));
+  else fallbackCopy(text,done);
+}
+function fallbackCopy(text,done){
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    document.execCommand('copy');document.body.removeChild(ta);done();
+  }catch(e){print('error: could not copy '+text)}
+}
+
+const HELP=['commands:',
+'  /add <rack#-slot#>       followed by lines of: <BMC MAC> then <serial>, or "e" to skip a slot',
+'                           /add needs Enter twice — the first Enter only adds a newline',
+'  /clear                   clear this terminal',
+'  /i <SN>                  print the BMC MAC and full serial (last 5 digits work too)',
+'  /i rack1|rack2           dump every slot in that rack',
+'  /note <SN> <note>        add a note (max 100 chars) — also appended to the node log',
+'                           /note <SN> with no text clears the note',
+'  /log <SN>                print every note ever entered for that node',
+'  /del <SN>                remove that node from its rack',
+'',
+'any <SN> above also accepts a slot address like 1-37, for when two nodes share the last 5 digits',
+'',
+'batch commands act on every selected (red) node:',
+'  /bnote <note>            note them all',
+'  /bi                      print BMC + serial for each',
+'  /bi-bmc                  print just the BMC MACs',
+'  /bi-sn                   print just the serials',
+'  /bnext                   move them all forward a stage',
+'  /bback                   move them all back a stage',
+'  /bdel                    remove them all',
+'',
+'  /clearsel                clear the red selection',
+'  /export                  copy the whole state to the clipboard',
+'  /import <data>           rebuild state from exported data (replaces everything)',
+'',
+'click or drag slot numbers to select, an SN to copy it then again for the BMC,',
+'a NOTE to edit it; a copied SN turns red until you click elsewhere,',
+'the STAGE arrows step through bup p / bup / L10 p / L10 / Pass / Fail,',
+'bup starts a 90 min timer, L10 a 480 min one; every stage change is logged',
+'several commands can be pasted at once; each starts with /'];
+
+function runOne(lines){
+  const head=lines[0],cmd=head.split(/\s+/)[0].toLowerCase();
+  if(cmd==='/help')return print(...HELP);
+  if(cmd==='/clear'){logEl.innerHTML='';return}
+  if(cmd==='/clearsel')return clearSel();
+  if(cmd==='/add')return add(head,lines.slice(1));
+  if(cmd==='/i')return info(head);
+  if(cmd==='/bi')return batchInfo('both');
+  if(cmd==='/bi-bmc')return batchInfo('bmc');
+  if(cmd==='/bi-sn')return batchInfo('sn');
+  if(cmd==='/del')return del(head);
+  if(cmd==='/bdel')return batchDel();
+  if(cmd==='/bnext')return batchStage(1);
+  if(cmd==='/bback')return batchStage(-1);
+  if(cmd==='/note')return note(head);
+  if(cmd==='/bnote')return batchNote(head);
+  if(cmd==='/log')return showLog(head);
+  if(cmd==='/export')return exportState();
+  if(cmd==='/import')return importState(head);
+  print('error: unknown command "'+cmd+'"');
+}
+
+function run(raw){
+  const lines=raw.split('\n').map(l=>l.trim()).filter(l=>l.length);
+  if(!lines.length)return;
+  print(...lines.filter(l=>!/^\/(i|bi)\b/i.test(l)));
+  const blocks=[];
+  lines.forEach(l=>{
+    if(l.startsWith('/')||!blocks.length)blocks.push([l]);
+    else blocks[blocks.length-1].push(l);
+  });
+  blocks.forEach(runOne);
+}
+
+function submit(){
+  const raw=inEl.value;
+  if(raw.split('\n').some(l=>/^\s*\/add\b/i.test(l))&&!armed){
+    const at=inEl.selectionStart??raw.length;
+    inEl.value=raw.slice(0,at)+'\n'+raw.slice(inEl.selectionEnd??at);
+    armed=true;inEl.focus();inEl.selectionStart=inEl.selectionEnd=at+1;
+    return;
+  }
+  pinned=true;inEl.value='';armed=false;run(raw);
+}
+
+inEl.addEventListener('input',()=>{armed=false});
+inEl.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit()}});
+logEl.addEventListener('scroll',()=>{pinned=logEl.scrollHeight-logEl.scrollTop-logEl.clientHeight<8});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('mousedown',()=>{if(copied){copied=null;render()}});
+window.addEventListener('resize',render);
+setInterval(()=>{now=Date.now();render()},1000);
+
+try{
+  const raw=localStorage.getItem(KEY);
+  if(raw){
+    const d=JSON.parse(raw);
+    if(d&&d.racks){racks=migrate(d.racks);flags=d.flags||{};secret=cleanSecret(d.secret)}
+  }
+}catch(e){}
+render();
+print('node tracker ready. type /help');
+</script>
+</body>
+</html>
