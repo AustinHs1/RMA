@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Node Tracker</title>
+<style>
+html,body{margin:0;padding:0;height:100%}
+body{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13px;color:#111;background:#fff}
+*{box-sizing:border-box}
+#app{display:grid;grid-template-columns:1fr 1fr 1fr;height:100vh;width:100%;overflow:hidden}
+.col{border-right:1px solid #bbb;display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
+.hdr{padding:6px 8px;border-bottom:1px solid #bbb;background:#f2f2f2;font-weight:bold;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.box{flex:1;min-height:0;min-width:0;overflow:auto;padding:4px;display:flex}
+table{width:100%;height:100%;min-width:0;table-layout:fixed;border-collapse:collapse;line-height:1.25}
+th{text-align:left;color:#666;font-weight:normal;padding:.1em 4px}
+tbody tr{border-top:1px solid #e2e2e2}
+tbody tr.sel td{background:#d9f2df}
+tbody tr.sel td.slot.on{background:#d21f1f}
+td{padding:.14em 4px}
+.slot{user-select:none;cursor:pointer;background:#fafafa;color:#666}
+.slot.on{background:#d21f1f;color:#fff;font-weight:bold}
+.sn{border-left:1px solid #e2e2e2;cursor:pointer}
+.sn.cp{color:#d21f1f}
+.note{border-left:1px solid #e2e2e2;overflow-wrap:break-word;cursor:pointer}
+.st{padding:.14em 2px;border-left:1px solid #e2e2e2;border-right:1px solid #e2e2e2;overflow:hidden}
+.st>div{display:flex;align-items:baseline;justify-content:center;gap:3px;line-height:1.25;overflow:hidden}
+.lbl{flex:0 0 auto;white-space:nowrap;color:#222}
+.lbl.p,.lbl.fail,.lbl.over{color:#d21f1f}
+.lbl.fail,.lbl.over{font-weight:bold}
+.lbl.pass{color:#1a7f37}
+.tm{flex:0 1 auto;min-width:0;font-size:max(9px,.8em);white-space:nowrap;overflow:hidden;color:#888}
+.tm.over{color:#d21f1f;font-weight:bold}
+.arr{padding:.14em 2px;user-select:none;font-size:max(9px,.8em);cursor:pointer;color:transparent}
+.arr.on{color:#0b57d0}
+.arr.l{border-left:1px solid #e2e2e2;text-align:left}
+.arr.r{text-align:right}
+
+#side{display:flex;flex-direction:column;min-height:0;overflow:hidden;background:#fbfbfb}
+#tabs{display:flex;border-bottom:1px solid #bbb}
+#tabs button{flex:1;padding:8px 6px;border:0;border-right:1px solid #bbb;background:#eee;color:#555;font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer}
+#tabs button:last-child{border-right:0}
+#tabNode.on{background:#1a7f37;color:#fff}
+#tabBatch.on{background:#d21f1f;color:#fff}
+.pane{flex:1;min-height:0;overflow:auto;padding:10px;display:none;flex-direction:column;gap:10px}
+.pane.on{display:flex}
+.sect{display:flex;flex-direction:column;gap:4px}
+.k{color:#777;font-size:11px;letter-spacing:.04em}
+.v{cursor:pointer;overflow-wrap:break-word}
+.v:hover{background:#ffe9a8}
+.row{display:flex;gap:6px;align-items:stretch;flex-wrap:wrap}
+button.b{padding:7px 10px;background:#fff;border:1px solid #999;font-family:inherit;font-size:13px;cursor:pointer}
+button.b:hover{background:#f0f0f0}
+button.b:disabled{color:#bbb;border-color:#ddd;cursor:default;background:#fafafa}
+button.b.g{border-color:#1a7f37;color:#1a7f37}
+button.b.r{border-color:#d21f1f;color:#d21f1f}
+button.b.wide{flex:1}
+textarea.n{width:100%;height:64px;resize:vertical;font-family:inherit;font-size:13px;padding:6px;border:1px solid #999}
+textarea.n:focus,#addBody:focus{outline:1px solid #111}
+.out{border:1px solid #ddd;background:#fff;max-height:34vh;overflow:auto;padding:6px;line-height:1.45;white-space:pre-wrap;min-height:60px}
+.logline{color:#333}
+.logline+.logline{border-top:1px solid #f0f0f0;margin-top:2px;padding-top:2px}
+.ts{color:#999;margin-right:6px}
+#foot{border-top:1px solid #bbb;padding:6px;display:flex;flex-direction:column;gap:6px;background:#f2f2f2}
+#status{color:#555;min-height:1.4em;overflow-wrap:break-word}
+.empty{color:#888}
+#addBody{width:100%;height:120px;resize:vertical;font-family:inherit;font-size:13px;padding:6px;border:1px solid #999}
+input.f{font-family:inherit;font-size:13px;padding:6px;border:1px solid #999;width:70px}
+#pAdd{position:absolute;left:0;right:0;top:0;bottom:0;background:#fff;padding:10px;display:none;flex-direction:column;gap:10px;overflow:auto;z-index:2}
+#pAdd.on{display:flex}
+#sideBody{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+a{color:#0b57d0}a:hover{color:#083b8f}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="col"><div class="hdr"><span>RACK 1</span></div><div class="box"><table id="t1"></table></div></div>
+  <div class="col"><div class="hdr" id="hdr2" style="cursor:pointer"><span>RACK 2</span></div><div class="box"><table id="t2"></table></div></div>
+  <div id="side">
+    <div id="tabs">
+      <button id="tabNode" class="on">NODE</button>
+      <button id="tabBatch">BATCH</button>
+    </div>
+    <div id="sideBody">
+      <div id="pNode" class="pane on"></div>
+      <div id="pBatch" class="pane"></div>
+      <div id="pAdd"></div>
+    </div>
+    <div id="foot">
+      <div class="row">
+        <button class="b wide" id="bAdd">+ ADD NODES</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+</div>
+<script>
+const KEY='nodeTracker.v1';
+const STAGES=['bup p','bup','L10 p','L10','Pass','Fail'];
+const TIMED={'bup':90,'L10':480};
+const COUNTED={'bup p':1,'bup':1,'L10 p':1,'L10':1};
+const NOTE_MAX=200;
+const TOP=37,BOT=11,RIDS=['1','2'];
+
+let racks={1:{},2:{}}, flags={}, secret={note:'',log:[]};
+let cur=null, copied=null, justCopied=null, lastCopy=null, drag=null, now=Date.now(), tab='node';
+
+const $=id=>document.getElementById(id);
+const el=(t,c,txt)=>{const e=document.createElement(t);if(c)e.className=c;if(txt!==undefined)e.textContent=txt;return e};
+
+function cleanSecret(s){s=s||{};return{note:String(s.note||''),log:Array.isArray(s.log)?s.log:[]}}
+
+function migrate(src){
+  const out={1:{},2:{}};
+  for(const r of RIDS){
+    const rack=src[r]||{};
+    for(const k of Object.keys(rack)){
+      const n=rack[k]||{};
+      const since=Number(n.since||n.statusSince)||Date.now();
+      out[r][k]={
+        mac:String(n.mac||''),serial:String(n.serial||''),note:n.note||'',
+        log:Array.isArray(n.log)?n.log:(n.note?[{t:since,text:n.note}]:[]),
+        stage:Number.isInteger(Number(n.stage))&&n.stage>=0&&n.stage<STAGES.length?Number(n.stage):0,
+        visits:n.visits&&typeof n.visits==='object'?n.visits:{'bup p':1},
+        limit:Number(n.limit)||0,since};
+    }
+  }
+  return out;
+}
+
+function persist(){try{localStorage.setItem(KEY,JSON.stringify({racks,flags,secret}))}catch(e){}}
+function say(msg){$('status').textContent=msg||''}
+function mins(since){return Math.max(0,Math.floor((now-since)/60000))}
+function stamp(t){const d=new Date(t),p=n=>String(n).padStart(2,'0');return p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())}
+function stageIndex(n){const i=Number(n.stage);return Number.isInteger(i)&&i>=0&&i<STAGES.length?i:0}
+function labelFor(name,c){return(COUNTED[name]&&c>1)?name+' ('+Math.min(c,3)+'x)':name}
+function stageLabel(n){const name=STAGES[stageIndex(n)];return labelFor(name,(n.visits||{})[name]||1)}
+function countNodes(r){return RIDS.reduce((t,k)=>t+Object.keys(r[k]||{}).length,0)}
+function nodeAt(key){if(!key)return null;const[r,s]=key.split('-');return(racks[r]||{})[s]||null}
+
+function rowFont(){
+  const box=document.querySelector('.box');
+  const h=(box?box.clientHeight:0)-8;
+  if(!h)return 13;
+  return Math.max(9,Math.min(26,Math.floor((h/(TOP-BOT+2))/1.65)));
+}
+
+function copy(text,label,after){
+  const done=()=>{say('copied '+(label||text));if(after)after()};
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(text).then(done,()=>fallbackCopy(text,done));
+  else fallbackCopy(text,done);
+}
+function fallbackCopy(text,done){
+  const prev=document.activeElement;
+  const ss=prev&&prev.selectionStart,se=prev&&prev.selectionEnd;
+  try{
+    const ta=el('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();document.execCommand('copy');
+    document.body.removeChild(ta);done();
+  }catch(e){say('could not copy')}
+  if(prev&&prev.isConnected&&prev!==document.body){
+    prev.focus();
+    if(ss!==undefined&&ss!==null&&prev.setSelectionRange)try{prev.setSelectionRange(ss,se)}catch(e){}
+  }
+}
+
+/* ---------- selection ---------- */
+
+function flagged(){
+  const out=[];
+  for(const r of RIDS)for(let s=TOP;s>=BOT;s--)if(flags[r+'-'+s]&&racks[r][s])out.push({r,slot:s,node:racks[r][s]});
+  return out;
+}
+
+function startDrag(r,slot,e){
+  e.preventDefault();
+  drag={r,anchor:slot,on:!flags[r+'-'+slot],base:Object.assign({},flags)};
+  window.addEventListener('mousemove',dragMove);
+  applyRange(slot);
+}
+function dragMove(e){
+  if(!drag)return;
+  const t=document.elementFromPoint(e.clientX,e.clientY);
+  const cell=t&&t.closest?t.closest('td[data-slot]'):null;
+  if(!cell||cell.dataset.rack!==drag.r)return;
+  applyRange(Number(cell.dataset.slot));
+}
+function applyRange(slot){
+  const lo=Math.min(drag.anchor,slot),hi=Math.max(drag.anchor,slot);
+  flags=Object.assign({},drag.base);
+  for(let s=lo;s<=hi;s++){const k=drag.r+'-'+s;if(drag.on)flags[k]=true;else delete flags[k]}
+  render();
+}
+function endDrag(){
+  if(!drag)return;
+  window.removeEventListener('mousemove',dragMove);
+  drag=null;persist();
+  renderPanels();
+}
+
+function clearSel(){
+  const n=Object.keys(flags).length;
+  if(!n)return say('nothing selected');
+  flags={};persist();render();say('cleared '+n+' selection(s)');
+}
+
+/* ---------- mutations ---------- */
+
+function moveStage(r,slot,dir){
+  const n=racks[r][slot];if(!n)return;
+  const j=stageIndex(n)+dir;
+  if(j<0||j>=STAGES.length)return;
+  const name=STAGES[j],visits=Object.assign({},n.visits||{});
+  if(dir>0)visits[name]=(visits[name]||0)+1;
+  const label=labelFor(name,visits[name]||1);
+  n.stage=j;n.visits=visits;n.limit=TIMED[name]||0;
+  if(TIMED[name]&&dir>0)n.since=Date.now();
+  n.log=(n.log||[]).concat([{t:Date.now(),text:'stage: '+label}]);
+  persist();render();say(r+'-'+slot+' → '+label);
+}
+
+function batchStage(dir){
+  const hits=flagged();
+  if(!hits.length)return say('no nodes selected');
+  const t=Date.now(),moved=[];
+  hits.forEach(h=>{
+    const n=h.node,j=stageIndex(n)+dir;
+    if(j<0||j>=STAGES.length)return;
+    const name=STAGES[j],visits=Object.assign({},n.visits||{});
+    if(dir>0)visits[name]=(visits[name]||0)+1;
+    const label=labelFor(name,visits[name]||1);
+    n.stage=j;n.visits=visits;n.limit=TIMED[name]||0;
+    if(TIMED[name]&&dir>0)n.since=t;
+    n.log=(n.log||[]).concat([{t,text:'stage: '+label}]);
+    moved.push(h.r+'-'+h.slot);
+  });
+  if(!moved.length)return say('all selected nodes are at the '+(dir>0?'last':'first')+' stage');
+  persist();render();say('moved '+moved.length+' node(s) '+(dir>0?'forward':'back'));
+}
+
+function saveNote(key,text){
+  const n=nodeAt(key);if(!n)return;
+  text=text.trim().slice(0,NOTE_MAX);
+  if(!text){n.note='';persist();render();return say('cleared note on '+key)}
+  n.note=text;
+  n.log=(n.log||[]).concat([{t:Date.now(),text}]);
+  persist();render();say('noted '+key);
+}
+
+function batchNote(text){
+  text=text.trim().slice(0,NOTE_MAX);
+  if(!text)return say('type a note first');
+  const hits=flagged();
+  if(!hits.length)return say('no nodes selected');
+  const t=Date.now();
+  hits.forEach(h=>{h.node.note=text;h.node.log=(h.node.log||[]).concat([{t,text}])});
+  persist();render();say('noted '+hits.length+' node(s)');
+}
+
+function delNode(key){
+  const n=nodeAt(key);if(!n)return;
+  const[r,s]=key.split('-');
+  delete racks[r][s];delete flags[key];
+  if(cur===key)cur=null;
+  persist();render();say('removed '+String(n.serial).slice(-5)+' from '+key);
+}
+
+function batchDel(){
+  const hits=flagged();
+  if(!hits.length)return say('no nodes selected');
+  hits.forEach(h=>{delete racks[h.r][h.slot];delete flags[h.r+'-'+h.slot];if(cur===h.r+'-'+h.slot)cur=null});
+  persist();render();say('removed '+hits.length+' node(s)');
+}
+
+function findSerial(s){
+  for(const r of RIDS)for(const k of Object.keys(racks[r]))if(racks[r][k].serial===s)return r+'-'+k;
+  return null;
+}
+
+function addNodes(r,start,body){
+  if(r!=='1'&&r!=='2')return['rack must be 1 or 2'];
+  let slot=Number(start);
+  if(!Number.isInteger(slot)||slot>TOP||slot<BOT)return['slot '+start+' out of range ('+TOP+'-'+BOT+')'];
+  const lines=body.split('\n').map(l=>l.trim()).filter(l=>l.length);
+  if(!lines.length)return['no nodes given'];
+  const rack=racks[r],place=[],errs=[],seen=new Set();
+  for(let i=0;i<lines.length;i++){
+    if(slot<BOT){errs.push('ran past bottom of rack at slot '+slot);break}
+    const line=lines[i];
+    if(line.toLowerCase()==='e'){slot--;continue}
+    const serial=lines[i+1];
+    if(serial===undefined){errs.push('missing serial for MAC '+line);break}
+    if(serial.toLowerCase()==='e'){errs.push('expected a serial after MAC '+line+', got "e"');break}
+    i++;
+    if(rack[slot])errs.push('slot '+r+'-'+slot+' already occupied by '+String(rack[slot].serial).slice(-5));
+    if(seen.has(serial))errs.push('serial '+serial+' listed twice');
+    seen.add(serial);
+    const dup=findSerial(serial);
+    if(dup)errs.push('serial '+serial+' already in '+dup);
+    place.push({slot,mac:line,serial});slot--;
+  }
+  if(errs.length)return errs;
+  if(!place.length)return['no nodes given'];
+  const t=Date.now();
+  place.forEach(p=>{rack[p.slot]={mac:p.mac,serial:p.serial,note:'',log:[],stage:0,visits:{'bup p':1},limit:0,since:t}});
+  persist();render();
+  say('added '+place.length+' node'+(place.length===1?'':'s')+' to rack '+r);
+  return null;
+}
+
+/* ---------- rack grid ---------- */
+
+const HEAD='<thead><tr>'+
+ '<th style="width:8%">#</th>'+
+ '<th style="width:13%;border-left:1px solid #d8d8d8">SN</th>'+
+ '<th style="width:37%;border-left:1px solid #d8d8d8">NOTE</th>'+
+ '<th style="width:6%;border-left:1px solid #d8d8d8"></th>'+
+ '<th style="width:30%;text-align:center;border-left:1px solid #d8d8d8;border-right:1px solid #d8d8d8">STAGE</th>'+
+ '<th style="width:6%"></th></tr></thead>';
+
+const CELLS={};
+
+function build(){
+  for(const r of RIDS){
+    const t=$('t'+r);
+    t.innerHTML=HEAD;
+    const tb=el('tbody');
+    for(let slot=TOP;slot>=BOT;slot--){
+      const key=r+'-'+slot,tr=el('tr'),c={tr};
+
+      c.slot=el('td','slot',slot);
+      c.slot.dataset.rack=r;c.slot.dataset.slot=slot;
+      c.slot.title='click or drag to select';
+      c.slot.addEventListener('mousedown',e=>startDrag(r,slot,e));
+      tr.appendChild(c.slot);
+
+      c.sn=el('td','sn');
+      c.sn.onclick=()=>pickNode(key,false);
+      tr.appendChild(c.sn);
+
+      c.note=el('td','note');
+      c.note.onclick=()=>pickNode(key,true);
+      tr.appendChild(c.note);
+
+      c.prev=el('td','arr l','\u25C0');
+      c.prev.title='back a stage';
+      c.prev.onclick=()=>moveStage(r,slot,-1);
+      tr.appendChild(c.prev);
+
+      c.st=el('td','st');
+      c.wrap=el('div');
+      c.lbl=el('span','lbl');c.tm=el('span','tm');
+      c.wrap.appendChild(c.lbl);c.wrap.appendChild(c.tm);
+      c.st.appendChild(c.wrap);
+      tr.appendChild(c.st);
+
+      c.next=el('td','arr r','\u25B6');
+      c.next.title='forward a stage';
+      c.next.onclick=()=>moveStage(r,slot,1);
+      tr.appendChild(c.next);
+
+      CELLS[key]=c;
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+  }
+}
+
+function render(){
+  const fs=rowFont()+'px';
+  for(const r of RIDS){
+    $('t'+r).style.fontSize=fs;
+    for(let slot=TOP;slot>=BOT;slot--){
+      const key=r+'-'+slot,c=CELLS[key],n=racks[r][slot];
+      const si=n?stageIndex(n):0,name=STAGES[si];
+      const lim=n?(TIMED[name]||0):0;
+      const m=n?mins(n.since):0;
+      const over=!!(lim&&m>=lim);
+      c.tr.className=(n&&cur===key)?'sel':'';
+      c.slot.className='slot'+(flags[key]?' on':'');
+      c.sn.className='sn'+(n&&copied===key?' cp':'');
+      c.sn.textContent=n?String(n.serial).slice(-5):'';
+      c.note.textContent=n&&n.note?n.note:'';
+      c.prev.className='arr l'+(n&&si>0?' on':'');
+      c.next.className='arr r'+(n&&si<STAGES.length-1?' on':'');
+      c.wrap.style.display=n?'flex':'none';
+      if(n){
+        c.lbl.className='lbl'+(over?' over':(/\bp$/.test(name)?' p':(name==='Pass'?' pass':(name==='Fail'?' fail':''))));
+        c.lbl.textContent=stageLabel(n);
+        c.tm.className='tm'+(over?' over':'');
+        c.tm.textContent=lim?m+'/'+lim:'';
+      }
+    }
+  }
+  renderPanels();
+}
+
+function tick(){
+  now=Date.now();
+  for(const r of RIDS)for(const slot of Object.keys(racks[r])){
+    const c=CELLS[r+'-'+slot];if(!c)continue;
+    const n=racks[r][slot],name=STAGES[stageIndex(n)],lim=TIMED[name]||0;
+    if(!lim)continue;
+    const m=mins(n.since),over=m>=lim;
+    c.tm.textContent=m+'/'+lim;
+    c.tm.className='tm'+(over?' over':'');
+    c.lbl.className='lbl'+(over?' over':(/\bp$/.test(name)?' p':''));
+  }
+  if(tab==='node'&&cur){
+    const t=$('curTimer');
+    if(t){const n=nodeAt(cur),name=STAGES[stageIndex(n)],lim=TIMED[name]||0;
+      const m=mins(n.since),over=lim&&m>=lim;
+      t.textContent=lim?m+'/'+lim+' min':'';
+      t.className='tm'+(over?' over':'');}
+  }
+}
+
+/* ---------- panel ---------- */
+
+function pickNode(key,toNote){
+  const n=nodeAt(key);if(!n)return;
+  const full=lastCopy===key;
+  lastCopy=full?null:key;
+  copied=key;justCopied=key;cur=key;
+  setTab('node');render();
+  const focusNote=()=>{const ta=$('noteBox');if(ta){ta.focus();ta.selectionStart=ta.selectionEnd=ta.value.length}};
+  copy(full?n.mac:String(n.serial).slice(-5),full?'BMC '+n.mac:String(n.serial).slice(-5),toNote?focusNote:null);
+  if(toNote)focusNote();
+}
+
+function setTab(t){
+  tab=t;
+  $('tabNode').className=t==='node'?'on':'';
+  $('tabBatch').className=t==='batch'?'on':'';
+  $('pNode').className='pane'+(t==='node'?' on':'');
+  $('pBatch').className='pane'+(t==='batch'?' on':'');
+}
+
+function kv(label,value,onClick){
+  const s=el('div','sect');
+  s.appendChild(el('div','k',label));
+  const v=el('div','v',value);
+  if(onClick)v.onclick=onClick;else v.style.cursor='default';
+  s.appendChild(v);
+  return s;
+}
+
+function logBox(entries){
+  const box=el('div','out');
+  if(!entries||!entries.length)box.appendChild(el('div','empty','no log entries'));
+  else entries.slice().reverse().forEach(e=>{
+    const d=el('div','logline');
+    d.appendChild(el('span','ts',stamp(e.t)));
+    d.appendChild(document.createTextNode(e.text));
+    box.appendChild(d);
+  });
+  return box;
+}
+
+function renderPanels(){
+  renderNodePane();
+  renderBatchPane();
+}
+
+function renderNodePane(){
+  const p=$('pNode');
+  const keep=document.activeElement===$('noteBox')?$('noteBox').value:null;
+  p.innerHTML='';
+  const n=nodeAt(cur);
+  if(!n){
+    cur=null;
+    p.appendChild(el('div','empty','Click a node SN or note to work on it.'));
+    return;
+  }
+  const si=stageIndex(n),name=STAGES[si],lim=TIMED[name]||0,m=mins(n.since);
+
+  const idr=el('div','sect');
+  idr.appendChild(el('div','k','SLOT '+cur.split('-')[0]+'-'+cur.split('-')[1]));
+  const ids=el('div','row');
+  const sv=el('div','v',n.serial);
+  sv.style.cssText='flex:1;min-width:0';
+  sv.title='serial';
+  sv.onclick=()=>copy(n.serial);
+  const bv=el('div','v',n.mac);
+  bv.style.cssText='flex:1;min-width:0';
+  bv.title='BMC MAC';
+  bv.onclick=()=>copy(n.mac);
+  ids.appendChild(sv);ids.appendChild(bv);
+  idr.appendChild(ids);
+  p.appendChild(idr);
+
+  const st=el('div','sect');
+  st.appendChild(el('div','k','STAGE'));
+  const sr=el('div','row');
+  const back=el('button','b','◀ BACK');
+  back.disabled=si===0;
+  back.onclick=()=>moveStage(cur.split('-')[0],cur.split('-')[1],-1);
+  const mid=el('div');
+  mid.style.cssText='flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;align-items:center';
+  const lbl=el('span','lbl'+(lim&&m>=lim?' over':(/\bp$/.test(name)?' p':(name==='Pass'?' pass':(name==='Fail'?' fail':'')))),stageLabel(n));
+  lbl.style.fontWeight='bold';
+  const tm=el('span','tm'+(lim&&m>=lim?' over':''),lim?m+'/'+lim+' min':'');
+  tm.id='curTimer';
+  mid.appendChild(lbl);mid.appendChild(tm);
+  const fwd=el('button','b','NEXT ▶');
+  fwd.disabled=si===STAGES.length-1;
+  fwd.onclick=()=>moveStage(cur.split('-')[0],cur.split('-')[1],1);
+  sr.appendChild(back);sr.appendChild(mid);sr.appendChild(fwd);
+  st.appendChild(sr);
+  p.appendChild(st);
+
+  const ns=el('div','sect');
+  ns.appendChild(el('div','k','NOTE — max '+NOTE_MAX+' chars'));
+  const ta=el('textarea','n');
+  ta.id='noteBox';ta.maxLength=NOTE_MAX;
+  ta.value=keep!==null?keep:(n.note||'');
+  ns.appendChild(ta);
+  const nr=el('div','row');
+  const save=el('button','b g wide','SAVE NOTE');
+  save.onclick=()=>saveNote(cur,ta.value);
+  const clr=el('button','b','CLEAR');
+  clr.onclick=()=>{ta.value='';saveNote(cur,'')};
+  nr.appendChild(save);nr.appendChild(clr);
+  ns.appendChild(nr);
+  p.appendChild(ns);
+  ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();saveNote(cur,ta.value)}});
+  if(keep!==null){ta.focus();ta.selectionStart=ta.selectionEnd=ta.value.length}
+
+  const ls=el('div','sect');
+  ls.appendChild(el('div','k','LOG'));
+  ls.appendChild(logBox(n.log));
+  p.appendChild(ls);
+
+  const dr=el('div','row');
+  const del=el('button','b r wide','DELETE NODE');
+  del.onclick=()=>{if(confirm('Remove '+n.serial+' from '+cur+'?'))delNode(cur)};
+  dr.appendChild(del);
+  p.appendChild(dr);
+}
+
+let batchOut='';
+
+function renderBatchPane(){
+  const p=$('pBatch');
+  const keep=document.activeElement===$('bNoteBox')?$('bNoteBox').value:null;
+  p.innerHTML='';
+  const hits=flagged();
+
+  const hs=el('div','sect');
+  hs.appendChild(el('div','k','SELECTION'));
+  const hr=el('div','row');
+  const cnt=el('div','v',hits.length?hits.length+' node(s): '+hits.map(h=>h.r+'-'+h.slot).join(', '):'none — click or drag slot numbers');
+  cnt.style.cssText='flex:1;min-width:0;cursor:default';
+  hr.appendChild(cnt);
+  const cl=el('button','b','CLEAR');
+  cl.disabled=!hits.length;cl.onclick=clearSel;
+  hr.appendChild(cl);
+  hs.appendChild(hr);
+  p.appendChild(hs);
+
+  const st=el('div','sect');
+  st.appendChild(el('div','k','STAGE'));
+  const sr=el('div','row');
+  const back=el('button','b wide','◀ BACK ALL');
+  back.disabled=!hits.length;back.onclick=()=>batchStage(-1);
+  const fwd=el('button','b wide','NEXT ALL ▶');
+  fwd.disabled=!hits.length;fwd.onclick=()=>batchStage(1);
+  sr.appendChild(back);sr.appendChild(fwd);
+  st.appendChild(sr);
+  p.appendChild(st);
+
+  const ns=el('div','sect');
+  ns.appendChild(el('div','k','NOTE ALL — max '+NOTE_MAX+' chars'));
+  const ta=el('textarea','n');
+  ta.id='bNoteBox';ta.maxLength=NOTE_MAX;
+  ta.value=keep!==null?keep:'';
+  ns.appendChild(ta);
+  const ap=el('button','b r wide','APPLY TO '+(hits.length||0)+' NODE(S)');
+  ap.disabled=!hits.length;
+  ap.onclick=()=>{batchNote(ta.value);ta.value=''};
+  const nr=el('div','row');nr.appendChild(ap);
+  ns.appendChild(nr);
+  p.appendChild(ns);
+  if(keep!==null){ta.focus();ta.selectionStart=ta.selectionEnd=ta.value.length}
+
+  const os=el('div','sect');
+  os.appendChild(el('div','k','OUTPUT'));
+  const or=el('div','row');
+  [['BMC','bmc'],['SN','sn'],['BOTH','both']].forEach(([label,mode])=>{
+    const b=el('button','b wide',label);
+    b.disabled=!hits.length;
+    b.onclick=()=>{
+      const lines=[];
+      flagged().forEach(h=>{
+        if(mode==='bmc')lines.push(h.node.mac);
+        else if(mode==='sn')lines.push(h.node.serial);
+        else lines.push(h.node.mac,h.node.serial);
+      });
+      batchOut=lines.join('\n');renderBatchPane();
+    };
+    or.appendChild(b);
+  });
+  os.appendChild(or);
+  const out=el('div','out');
+  if(batchOut)out.textContent=batchOut;
+  else out.appendChild(el('div','empty','pick BMC, SN or BOTH to list the selection'));
+  os.appendChild(out);
+  const or2=el('div','row');
+  const cp=el('button','b wide','COPY OUTPUT');
+  cp.disabled=!batchOut;cp.onclick=()=>copy(batchOut,'output');
+  or2.appendChild(cp);
+  const cl2=el('button','b','CLEAR');
+  cl2.disabled=!batchOut;cl2.onclick=()=>{batchOut='';renderBatchPane()};
+  or2.appendChild(cl2);
+  os.appendChild(or2);
+  p.appendChild(os);
+
+  const dr=el('div','row');
+  const del=el('button','b r wide','DELETE '+(hits.length||0)+' NODE(S)');
+  del.disabled=!hits.length;
+  del.onclick=()=>{if(confirm('Remove '+hits.length+' node(s)?'))batchDel()};
+  dr.appendChild(del);
+  p.appendChild(dr);
+}
+
+/* ---------- add / export / import ---------- */
+
+function openAdd(){
+  const p=$('pAdd');
+  p.innerHTML='';
+  p.classList.add('on');
+
+  const h=el('div','sect');
+  h.appendChild(el('div','k','ADD NODES'));
+  const hr=el('div','row');
+  hr.appendChild(el('span',null,'rack'));
+  const rs=el('select');
+  rs.style.cssText='font-family:inherit;font-size:13px;padding:6px;border:1px solid #999';
+  ['1','2'].forEach(v=>{const o=el('option',null,v);o.value=v;rs.appendChild(o)});
+  hr.appendChild(rs);
+  hr.appendChild(el('span',null,'start slot'));
+  const sl=el('input','f');
+  sl.type='number';sl.min=BOT;sl.max=TOP;sl.value=TOP;
+  hr.appendChild(sl);
+  h.appendChild(hr);
+  p.appendChild(h);
+
+  const bs=el('div','sect');
+  bs.appendChild(el('div','k','ONE LINE EACH: BMC MAC, THEN SERIAL — "e" SKIPS A SLOT'));
+  const ta=el('textarea');
+  ta.id='addBody';
+  ta.placeholder='90:5a:08:35:cd:af\nS990S04X6831095\ne\n90:5a:08:35:cd:b0\nS990S04X6831096';
+  bs.appendChild(ta);
+  p.appendChild(bs);
+
+  const errs=el('div','out');
+  errs.style.display='none';
+  p.appendChild(errs);
+
+  const row=el('div','row');
+  const go=el('button','b g wide','ADD');
+  go.onclick=()=>{
+    const bad=addNodes(rs.value,sl.value,ta.value);
+    if(bad){
+      errs.style.display='block';errs.innerHTML='';
+      bad.forEach(b=>errs.appendChild(el('div','logline','error: '+b)));
+      errs.appendChild(el('div','empty','nothing added'));
+      return;
+    }
+    ta.value='';errs.style.display='none';closeAdd();
+  };
+  const cancel=el('button','b','CANCEL');
+  cancel.onclick=closeAdd;
+  row.appendChild(go);row.appendChild(cancel);
+  p.appendChild(row);
+  ta.focus();
+}
+function openSecret(){
+  const p=$('pAdd');
+  p.innerHTML='';
+  p.classList.add('on');
+
+  const h=el('div','sect');
+  h.appendChild(el('div','k','S — SCRATCHPAD'));
+  p.appendChild(h);
+
+  const ns=el('div','sect');
+  ns.appendChild(el('div','k','NOTE — max '+NOTE_MAX+' chars'));
+  const ta=el('textarea','n');
+  ta.maxLength=NOTE_MAX;
+  ta.value=secret.note||'';
+  ns.appendChild(ta);
+  const nr=el('div','row');
+  const save=el('button','b g wide','SAVE');
+  const commit=()=>{
+    const text=ta.value.trim().slice(0,NOTE_MAX);
+    if(!text)return say('type something first');
+    secret={note:text,log:(secret.log||[]).concat([{t:Date.now(),text}])};
+    persist();say('saved to s');ta.value='';
+  };
+  save.onclick=commit;
+  ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();commit()}});
+  nr.appendChild(save);
+  const close=el('button','b','CLOSE');
+  close.onclick=closeAdd;
+  nr.appendChild(close);
+  ns.appendChild(nr);
+  p.appendChild(ns);
+
+  const ls=el('div','sect');
+  const lk=el('div','k','LOG');
+  lk.style.cursor='pointer';
+  ls.appendChild(lk);
+  let taps=0,timer=0;
+  lk.onclick=()=>{
+    taps++;
+    clearTimeout(timer);
+    timer=setTimeout(()=>{taps=0},700);
+    if(taps<3)return;
+    taps=0;clearTimeout(timer);
+    ls.appendChild(logBox(secret.log));
+    lk.onclick=null;lk.style.cursor='default';
+  };
+  p.appendChild(ls);
+  ta.focus();ta.selectionStart=ta.selectionEnd=ta.value.length;
+}
+
+function closeAdd(){$('pAdd').classList.remove('on')}
+
+/* ---------- wiring ---------- */
+
+$('tabNode').onclick=()=>{setTab('node');renderPanels()};
+$('tabBatch').onclick=()=>{setTab('batch');renderPanels()};
+$('bAdd').onclick=openAdd;
+$('hdr2').onclick=openSecret;
+
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('click',e=>{
+  if(copied&&copied!==justCopied){
+    copied=null;
+    for(const k in CELLS)CELLS[k].sn.classList.remove('cp');
+  }
+  justCopied=null;
+});
+window.addEventListener('resize',render);
+window.addEventListener('keydown',e=>{if(e.key==='Escape')closeAdd()});
+setInterval(tick,1000);
+
+try{
+  const raw=localStorage.getItem(KEY);
+  if(raw){
+    const d=JSON.parse(raw);
+    if(d&&d.racks){racks=migrate(d.racks);flags=d.flags||{};secret=cleanSecret(d.secret)}
+  }
+}catch(e){}
+build();render();
+say('ready');
+</script>
+</body>
+</html>
